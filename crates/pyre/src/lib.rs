@@ -8,11 +8,21 @@
 pub mod camera;
 pub mod film;
 pub mod geometry;
+pub mod integrator;
 pub mod io;
+pub mod light;
+pub mod material;
 pub mod math;
+pub mod sampler;
+pub mod scene;
 
 pub use camera::{Camera, PinholeCamera};
 pub use film::Film;
 pub use geometry::{Bvh, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
+pub use integrator::PathIntegrator;
 pub use io::{GltfError, load_gltf};
-pub use math::{Bounds3, Ray};
+pub use light::{DiffuseAreaQuadLight, Light, LightHit, LightSample};
+pub use material::{Bsdf, BsdfSample, Lambertian};
+pub use math::{Bounds3, Frame, Ray};
+pub use sampler::{IndependentSampler, Sampler, pixel_seed};
+pub use scene::{HitKind, Primitive, Scene, SceneHit};

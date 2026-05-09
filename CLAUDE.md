@@ -33,15 +33,15 @@ The dev profile is set to `opt-level = 1` with dependencies at `opt-level = 3`. 
 
 CPU-first unidirectional path tracer. The integrator loop is parallelized per pixel/tile via rayon. The library is organized as one module per responsibility, each typically exposing a trait + implementations:
 
-- **math** — `Ray`, `Bounds3`. `glam` is the linalg primitive; treat it as a re-exported foundation rather than wrapping it in newtypes.
+- **math** — `Ray`, `Bounds3`, `Frame` (orthonormal basis around a normal). `glam` is the linalg primitive; treat it as a re-exported foundation rather than wrapping it in newtypes.
 - **color** *(planned)* — RGB, spectral, tonemapping. Spectral support comes after the core integrator works.
 - **geometry** — `Shape` trait, `Sphere`, `TriangleMesh`, `MeshInstance` (mesh + BVH), and our own SAH-binned `Bvh`. The `Shape` trait is what lights, integrators, and scene queries see.
-- **scene** *(planned)* — scene graph, instancing, top-level BVH (TLAS) over mesh instances.
+- **scene** — `Scene { primitives, materials, lights }`, `Primitive` (mesh instance + material id), `SceneHit` enum tagged Surface/Light. Linear iteration today; a top-level BVH (TLAS) lands at milestone 5 if perf needs it.
 - **camera** — `Camera` trait (`PinholeCamera` exists; `ThinLensCamera` next).
-- **sampler** *(planned)* — `Sampler` trait (`Halton`, `Sobol`, stratified). Per-pixel deterministic state — never `rand::thread_rng()` in hot paths.
-- **material** *(planned)* — `BSDF` trait, Disney principled BSDF as the default.
-- **light** *(planned)* — `Light` trait (area, point, distant, HDRI environment).
-- **integrator** *(planned)* — `Integrator` trait, unidirectional path tracer with MIS.
+- **sampler** — `Sampler` trait + `IndependentSampler` (xoshiro256++). Per-pixel deterministic seeds via `pixel_seed(x, y, sample)`. Stratified / Halton / Sobol come later.
+- **material** — `Bsdf` trait + `Lambertian`. Disney principled BSDF (with GGX, transmission, sheen, clearcoat) is milestone 4.
+- **light** — `Light` trait + `DiffuseAreaQuadLight`. Lights live separately from primitives; shadow rays test only primitives.
+- **integrator** — `PathIntegrator`: unidirectional path tracer with MIS direct lighting (NEE light-sample arm + BSDF-sample arm via the power heuristic) and Russian roulette.
 - **film** — Tile management, AOVs, PNG/EXR writers.
 - **io** — `load_gltf` (walks the default scene's node hierarchy, bakes transforms into vertex data). PBRT loader and a `SceneLoader` trait come with milestone 7.
 - **viewer** *(planned)* — winit + pixels progressive preview window.
@@ -66,7 +66,7 @@ The renderer should always be runnable. Each milestone adds a visible capability
 |---|---|---|
 | 1 ✅ | Normals on a sphere | math, geometry::Sphere, camera, film, PNG output |
 | 2 ✅ | Triangle meshes + BVH + glTF loader | geometry::TriangleMesh, MeshInstance, Bvh, io::gltf |
-| 3 | Path tracing with MIS | sampler, integrator, light (area), Lambertian BRDF |
+| 3 ✅ | Path tracing with MIS | sampler, material, light, scene, integrator |
 | 4 | Disney principled BSDF | material |
 | 5 | Progressive viewer window | viewer (winit + pixels) |
 | 6 | HDRI envs, thin-lens DoF, motion blur | light::env, camera::ThinLens, time-varying transforms |
@@ -95,3 +95,4 @@ If you add a new top-level module to the engine, change the integrator architect
 ## Notes by milestone
 
 - **2** — `MeshInstance` (mesh + BVH) is the renderable unit; bare `TriangleMesh` is just data. The BVH is single-level (BLAS over triangles); a top-level BVH over instances arrives with the `scene` module. The CLI keeps a flat `World { instances: Vec<MeshInstance> }` and iterates linearly — this is fine for one or two meshes but should be replaced before scenes get large. Tests in `geometry::mesh::tests` cover triangle hits, misses, and BVH closest-hit selection.
+- **3** — Path tracer is the textbook "MIS direct lighting + cosine-weighted BSDF sampling + Russian roulette" recipe. Lights are stored on `Scene` separately from primitives (so shadow rays don't have to skip emitters); when a BSDF-sampled ray happens to land on a light, the integrator recognises it via `SceneHit::Light` and applies the power-heuristic MIS weight. Camera rays and (eventually) specular bounces collect Le without MIS — that's the `last_was_specular` flag in `integrator::PathIntegrator`. The `Scene::bounds()` used for auto-framing intentionally excludes lights, so distant emitters won't pull the camera back. Cargo workspace bumped from `rand 0.8` to `rand 0.9` (and `rand_xoshiro 0.6 → 0.7`) to dodge Rust 2024's reserved `gen` keyword.
