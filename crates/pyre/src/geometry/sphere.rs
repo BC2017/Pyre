@@ -1,16 +1,6 @@
+use super::{Shape, SurfaceInteraction};
 use crate::math::Ray;
 use glam::Vec3;
-
-#[derive(Debug, Clone, Copy)]
-pub struct SurfaceInteraction {
-    pub t: f32,
-    pub position: Vec3,
-    pub normal: Vec3,
-}
-
-pub trait Shape: Send + Sync {
-    fn intersect(&self, ray: &Ray) -> Option<SurfaceInteraction>;
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Sphere {
@@ -20,8 +10,7 @@ pub struct Sphere {
 
 impl Shape for Sphere {
     fn intersect(&self, ray: &Ray) -> Option<SurfaceInteraction> {
-        // Ray direction is normalized (Ray::new normalizes), so the quadratic
-        // a-coefficient is 1.
+        // Ray::new normalizes direction, so the quadratic a-coefficient is 1.
         let oc = ray.origin - self.center;
         let half_b = oc.dot(ray.direction);
         let c = oc.length_squared() - self.radius * self.radius;

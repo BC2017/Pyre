@@ -35,15 +35,15 @@ CPU-first unidirectional path tracer. The integrator loop is parallelized per pi
 
 - **math** — `Ray`, `Bounds3`. `glam` is the linalg primitive; treat it as a re-exported foundation rather than wrapping it in newtypes.
 - **color** *(planned)* — RGB, spectral, tonemapping. Spectral support comes after the core integrator works.
-- **geometry** — `Shape` trait (`Sphere`, `TriangleMesh`), our own BVH (not embree). The `Shape` trait is what lights, integrators, and scene queries see.
-- **scene** *(planned)* — scene graph, instancing, transforms.
+- **geometry** — `Shape` trait, `Sphere`, `TriangleMesh`, `MeshInstance` (mesh + BVH), and our own SAH-binned `Bvh`. The `Shape` trait is what lights, integrators, and scene queries see.
+- **scene** *(planned)* — scene graph, instancing, top-level BVH (TLAS) over mesh instances.
 - **camera** — `Camera` trait (`PinholeCamera` exists; `ThinLensCamera` next).
 - **sampler** *(planned)* — `Sampler` trait (`Halton`, `Sobol`, stratified). Per-pixel deterministic state — never `rand::thread_rng()` in hot paths.
 - **material** *(planned)* — `BSDF` trait, Disney principled BSDF as the default.
 - **light** *(planned)* — `Light` trait (area, point, distant, HDRI environment).
 - **integrator** *(planned)* — `Integrator` trait, unidirectional path tracer with MIS.
 - **film** — Tile management, AOVs, PNG/EXR writers.
-- **io** *(planned)* — `SceneLoader` trait. glTF + PBRT first; USD deferred.
+- **io** — `load_gltf` (walks the default scene's node hierarchy, bakes transforms into vertex data). PBRT loader and a `SceneLoader` trait come with milestone 7.
 - **viewer** *(planned)* — winit + pixels progressive preview window.
 
 Modules marked *(planned)* don't exist yet — add them when the corresponding milestone lands.
@@ -65,7 +65,7 @@ The renderer should always be runnable. Each milestone adds a visible capability
 | # | Milestone | Adds |
 |---|---|---|
 | 1 ✅ | Normals on a sphere | math, geometry::Sphere, camera, film, PNG output |
-| 2 | Triangle meshes + BVH + glTF loader | geometry::TriangleMesh, BVH, io::gltf |
+| 2 ✅ | Triangle meshes + BVH + glTF loader | geometry::TriangleMesh, MeshInstance, Bvh, io::gltf |
 | 3 | Path tracing with MIS | sampler, integrator, light (area), Lambertian BRDF |
 | 4 | Disney principled BSDF | material |
 | 5 | Progressive viewer window | viewer (winit + pixels) |
@@ -91,3 +91,7 @@ When a milestone needs a workspace-listed dep (e.g., `gltf` at milestone 2), add
 ## Modifying this file
 
 If you add a new top-level module to the engine, change the integrator architecture, or alter the build profile, update this file in the same change. CLAUDE.md is the contract for future sessions; drift here costs other people time.
+
+## Notes by milestone
+
+- **2** — `MeshInstance` (mesh + BVH) is the renderable unit; bare `TriangleMesh` is just data. The BVH is single-level (BLAS over triangles); a top-level BVH over instances arrives with the `scene` module. The CLI keeps a flat `World { instances: Vec<MeshInstance> }` and iterates linearly — this is fine for one or two meshes but should be replaced before scenes get large. Tests in `geometry::mesh::tests` cover triangle hits, misses, and BVH closest-hit selection.

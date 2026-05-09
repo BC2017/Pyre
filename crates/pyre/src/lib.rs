@@ -8,9 +8,11 @@
 pub mod camera;
 pub mod film;
 pub mod geometry;
+pub mod io;
 pub mod math;
 
 pub use camera::{Camera, PinholeCamera};
 pub use film::Film;
-pub use geometry::{Shape, Sphere, SurfaceInteraction};
+pub use geometry::{Bvh, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
+pub use io::{GltfError, load_gltf};
 pub use math::{Bounds3, Ray};
