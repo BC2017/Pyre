@@ -1,0 +1,20 @@
+[package]
+name = "pyre-cli"
+description = "Pyre command-line renderer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "pyre"
+path = "src/main.rs"
+
+[dependencies]
+pyre = { path = "../pyre" }
+glam.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

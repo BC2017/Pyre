@@ -1,0 +1,55 @@
+[workspace]
+members = ["crates/pyre", "crates/pyre-cli"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Pyre Authors"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Math / parallelism
+glam = { version = "0.29", features = ["serde"] }
+rayon = "1.10"
+
+# Sampling / RNG
+rand = "0.8"
+rand_xoshiro = "0.6"
+
+# Image IO
+exr = "1.73"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Scene loaders (added per-milestone — versions locked here)
+gltf = "1.4"
+nom = "7.1"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+
+# Errors / logging / CLI
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+indicatif = "0.17"
+
+# Viewer (added at milestone 5)
+winit = "0.30"
+pixels = "0.14"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1
+
+# Dev: keep our code at opt-level=1 for fast compiles but viable runtime;
+# dependencies (glam SIMD, rayon, image) at full opt so a debug render is
+# not unusably slow.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

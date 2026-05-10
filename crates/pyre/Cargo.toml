@@ -1,0 +1,19 @@
+[package]
+name = "pyre"
+description = "A high-fidelity offline path tracer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+glam.workspace = true
+rayon.workspace = true
+rand.workspace = true
+rand_xoshiro.workspace = true
+exr.workspace = true
+image.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+indicatif.workspace = true
