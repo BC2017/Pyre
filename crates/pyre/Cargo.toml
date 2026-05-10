@@ -7,6 +7,11 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[features]
+# Bundles the progressive viewer window (winit + pixels). Off by default so
+# library consumers that only want the offline renderer don't pull wgpu.
+viewer = ["dep:winit", "dep:pixels", "dep:anyhow"]
+
 [dependencies]
 glam.workspace = true
 rayon.workspace = true
@@ -18,3 +23,8 @@ gltf.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
+
+# Viewer-only — gated by the `viewer` feature.
+winit = { workspace = true, optional = true }
+pixels = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }

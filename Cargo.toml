@@ -38,7 +38,7 @@ indicatif = "0.17"
 
 # Viewer (added at milestone 5)
 winit = "0.30"
-pixels = "0.14"
+pixels = "0.17"
 
 [profile.release]
 lto = "thin"

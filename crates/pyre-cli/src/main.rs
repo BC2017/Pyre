@@ -28,7 +28,8 @@ struct Cli {
     #[arg(long, default_value_t = 600)]
     height: u32,
 
-    /// Samples per pixel.
+    /// Samples per pixel. In viewer mode, `0` means unbounded — render
+    /// until the user closes the window.
     #[arg(long, default_value_t = 16)]
     spp: u32,
 
@@ -36,6 +37,13 @@ struct Cli {
     /// kills paths earlier).
     #[arg(long, default_value_t = 8)]
     max_depth: u32,
+
+    /// Open a progressive preview window (winit + pixels) instead of
+    /// rendering offline. Press `S` to save a PNG snapshot to `--output`,
+    /// `Q`/`Esc` to quit. When `--spp` is non-zero the snapshot is
+    /// auto-saved on completion.
+    #[arg(long)]
+    viewer: bool,
 }
 
 fn main() -> Result<()> {
@@ -89,6 +97,22 @@ fn main() -> Result<()> {
         max_depth: args.max_depth,
         min_rr_depth: 3,
     };
+
+    if args.viewer {
+        let target_spp = if args.spp == 0 { None } else { Some(args.spp) };
+        pyre::viewer::run(
+            scene,
+            Box::new(camera),
+            integrator,
+            pyre::viewer::ViewerConfig {
+                width: args.width,
+                height: args.height,
+                target_spp,
+                snapshot_path: args.output.clone(),
+            },
+        )?;
+        return Ok(());
+    }
 
     let mut film = Film::new(args.width, args.height);
     let width = args.width;

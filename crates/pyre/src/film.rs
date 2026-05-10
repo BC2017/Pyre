@@ -20,6 +20,19 @@ impl Film {
         }
     }
 
+    /// Wrap a pre-computed linear-radiance buffer as a `Film` so it can be
+    /// fed to `save_png` etc. The buffer is row-major with origin at
+    /// top-left, matching the convention used by `render`. Used by the
+    /// progressive viewer for snapshot saving.
+    pub fn from_buffer(width: u32, height: u32, pixels: Vec<Vec3>) -> Self {
+        assert_eq!(
+            pixels.len(),
+            (width as usize) * (height as usize),
+            "pixel buffer length must equal width * height"
+        );
+        Self { width, height, pixels }
+    }
+
     pub fn width(&self) -> u32 {
         self.width
     }

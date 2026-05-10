@@ -12,7 +12,7 @@ name = "pyre"
 path = "src/main.rs"
 
 [dependencies]
-pyre = { path = "../pyre" }
+pyre = { path = "../pyre", features = ["viewer"] }
 glam.workspace = true
 clap.workspace = true
 anyhow.workspace = true
