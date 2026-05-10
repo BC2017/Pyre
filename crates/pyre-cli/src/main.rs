@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use glam::Vec3;
 use pyre::{
-    Bounds3, Camera, DiffuseAreaQuadLight, Film, IndependentSampler, Lambertian, MeshInstance,
-    PathIntegrator, PinholeCamera, Primitive, Sampler, Scene, TriangleMesh, load_gltf, pixel_seed,
+    Bounds3, Camera, DiffuseAreaQuadLight, DisneyBsdf, Film, IndependentSampler, Lambertian,
+    MeshInstance, PathIntegrator, PinholeCamera, Primitive, Sampler, Scene, TriangleMesh,
+    load_gltf, pixel_seed,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -233,11 +234,32 @@ fn cornell_box() -> Scene {
         });
     }
 
-    // White sphere sitting on the floor.
-    let sphere = make_uv_sphere(Vec3::new(0.0, -0.6, 0.0), 0.4, 48, 24);
+    // Polished gold metal sphere (front-right).
+    let gold = scene.materials.len() as u32;
+    scene.materials.push(Box::new(DisneyBsdf {
+        base_color: Vec3::new(1.0, 0.766, 0.336),
+        metallic: 1.0,
+        roughness: 0.1,
+        specular: 0.5,
+    }));
+    let gold_sphere = make_uv_sphere(Vec3::new(0.35, -0.65, 0.25), 0.35, 48, 24);
     scene.primitives.push(Primitive {
-        instance: MeshInstance::build(sphere),
-        material_id: white,
+        instance: MeshInstance::build(gold_sphere),
+        material_id: gold,
+    });
+
+    // Glossy white plastic sphere (back-left).
+    let plastic = scene.materials.len() as u32;
+    scene.materials.push(Box::new(DisneyBsdf {
+        base_color: Vec3::splat(0.72),
+        metallic: 0.0,
+        roughness: 0.18,
+        specular: 0.5,
+    }));
+    let plastic_sphere = make_uv_sphere(Vec3::new(-0.35, -0.65, -0.3), 0.35, 48, 24);
+    scene.primitives.push(Primitive {
+        instance: MeshInstance::build(plastic_sphere),
+        material_id: plastic,
     });
 
     // Ceiling area light. Cross product (edge_u × edge_v) points -Y so the

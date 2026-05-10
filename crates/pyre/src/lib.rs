@@ -22,7 +22,7 @@ pub use geometry::{Bvh, MeshInstance, Shape, Sphere, SurfaceInteraction, Triangl
 pub use integrator::PathIntegrator;
 pub use io::{GltfError, load_gltf};
 pub use light::{DiffuseAreaQuadLight, Light, LightHit, LightSample};
-pub use material::{Bsdf, BsdfSample, Lambertian};
+pub use material::{Bsdf, BsdfSample, DisneyBsdf, Lambertian};
 pub use math::{Bounds3, Frame, Ray};
 pub use sampler::{IndependentSampler, Sampler, pixel_seed};
 pub use scene::{HitKind, Primitive, Scene, SceneHit};
