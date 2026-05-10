@@ -70,3 +70,31 @@ impl Bounds3 {
         0.5 * (self.min + self.max)
     }
 }
+
+/// Orthonormal basis with `n` as the +Z axis. Used to transform between world
+/// coordinates and BSDF-local coordinates where the shading normal points up.
+#[derive(Debug, Clone, Copy)]
+pub struct Frame {
+    pub t: Vec3,
+    pub bt: Vec3,
+    pub n: Vec3,
+}
+
+impl Frame {
+    pub fn from_normal(n: Vec3) -> Self {
+        // Pick a helper axis that isn't (nearly) parallel to n, then
+        // Gram–Schmidt to build a tangent and bitangent.
+        let helper = if n.x.abs() > 0.9 { Vec3::Y } else { Vec3::X };
+        let t = helper.cross(n).normalize();
+        let bt = n.cross(t);
+        Frame { t, bt, n }
+    }
+
+    pub fn to_local(&self, v: Vec3) -> Vec3 {
+        Vec3::new(v.dot(self.t), v.dot(self.bt), v.dot(self.n))
+    }
+
+    pub fn to_world(&self, v: Vec3) -> Vec3 {
+        v.x * self.t + v.y * self.bt + v.z * self.n
+    }
+}

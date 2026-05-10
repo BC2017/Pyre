@@ -15,8 +15,8 @@ glam = { version = "0.29", features = ["serde"] }
 rayon = "1.10"
 
 # Sampling / RNG
-rand = "0.8"
-rand_xoshiro = "0.6"
+rand = "0.9"
+rand_xoshiro = "0.7"
 
 # Image IO
 exr = "1.73"
