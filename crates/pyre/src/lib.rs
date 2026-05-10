@@ -15,6 +15,8 @@ pub mod material;
 pub mod math;
 pub mod sampler;
 pub mod scene;
+#[cfg(feature = "viewer")]
+pub mod viewer;
 
 pub use camera::{Camera, PinholeCamera};
 pub use film::Film;
