@@ -10,7 +10,7 @@
 
 use crate::{
     geometry::{MeshInstance, Shape, SurfaceInteraction},
-    light::Light,
+    light::{EnvironmentLight, Light},
     material::Bsdf,
     math::{Bounds3, Ray},
 };
@@ -25,6 +25,12 @@ pub struct Scene {
     pub primitives: Vec<Primitive>,
     pub materials: Vec<Box<dyn Bsdf>>,
     pub lights: Vec<Box<dyn Light>>,
+    /// Optional environment light (HDRI or procedural sky). Queried by
+    /// the integrator on miss and as an extra NEE arm at every shading
+    /// point. Lives separately from `lights` because it's at infinity —
+    /// it has no surface to intersect and is sampled by direction, not
+    /// by surface position.
+    pub env: Option<Box<dyn EnvironmentLight>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +50,7 @@ impl Scene {
             primitives: Vec::new(),
             materials: Vec::new(),
             lights: Vec::new(),
+            env: None,
         }
     }
 
@@ -87,6 +94,24 @@ impl Scene {
         }
 
         closest
+    }
+
+    /// Yes/no shadow ray test along a direction with no far bound. Used
+    /// for environment-light visibility, where the "target" is at
+    /// infinity. Tests primitives only.
+    pub fn occluded_dir(&self, from: Vec3, dir: Vec3) -> bool {
+        let ray = Ray {
+            origin: from,
+            direction: dir,
+            t_min: 1e-3,
+            t_max: f32::INFINITY,
+        };
+        for prim in &self.primitives {
+            if prim.instance.intersect(&ray).is_some() {
+                return true;
+            }
+        }
+        false
     }
 
     /// Yes/no shadow ray test: is anything between `from` and `to`?

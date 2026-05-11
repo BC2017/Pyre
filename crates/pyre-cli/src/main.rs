@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use glam::Vec3;
 use pyre::{
-    Bounds3, Camera, DiffuseAreaQuadLight, DisneyBsdf, Film, IndependentSampler, Lambertian,
-    MeshInstance, PathIntegrator, PinholeCamera, Primitive, Sampler, Scene, TriangleMesh,
-    load_gltf, pixel_seed,
+    Bounds3, Camera, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
+    IndependentSampler, Lambertian, MeshInstance, PathIntegrator, PinholeCamera, Primitive,
+    Sampler, Scene, TriangleMesh, load_gltf, load_hdri, pixel_seed,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -44,6 +44,30 @@ struct Cli {
     /// auto-saved on completion.
     #[arg(long)]
     viewer: bool,
+
+    /// Path to a Radiance `.hdr` environment map. Implies the `studio`
+    /// scene preset when `--scene` is also omitted.
+    #[arg(long)]
+    env: Option<PathBuf>,
+
+    /// Multiplier applied to the environment map's radiance.
+    #[arg(long, default_value_t = 1.0)]
+    env_intensity: f32,
+
+    /// Built-in scene to render when no glTF `--scene` is given. Defaults
+    /// to `cornell`; switches to `studio` automatically when `--env` is
+    /// set so the env light is the only illuminant.
+    #[arg(long, value_enum)]
+    preset: Option<ScenePreset>,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ScenePreset {
+    /// Closed Cornell box with a ceiling area light and two test spheres.
+    Cornell,
+    /// Open studio: ground plane and two test spheres, no area lights.
+    /// Pair with `--env` for HDRI lighting.
+    Studio,
 }
 
 fn main() -> Result<()> {
@@ -54,7 +78,7 @@ fn main() -> Result<()> {
     let args = Cli::parse();
     let aspect = args.width as f32 / args.height as f32;
 
-    let scene = if let Some(path) = &args.scene {
+    let mut scene = if let Some(path) = &args.scene {
         let meshes = load_gltf(path)
             .with_context(|| format!("loading glTF from {}", path.display()))?;
         tracing::info!(primitives = meshes.len(), "glTF loaded");
@@ -70,8 +94,31 @@ fn main() -> Result<()> {
         }
         scene
     } else {
-        cornell_box()
+        let preset = args.preset.unwrap_or(if args.env.is_some() {
+            ScenePreset::Studio
+        } else {
+            ScenePreset::Cornell
+        });
+        match preset {
+            ScenePreset::Cornell => cornell_box(),
+            ScenePreset::Studio => studio_scene(),
+        }
     };
+
+    if let Some(env_path) = &args.env {
+        let env = load_hdri(env_path, args.env_intensity)
+            .with_context(|| format!("loading HDRI from {}", env_path.display()))?;
+        tracing::info!(path = %env_path.display(), intensity = args.env_intensity, "HDRI loaded");
+        scene.env = Some(Box::new(env));
+    } else if matches!(args.preset, Some(ScenePreset::Studio)) {
+        // Studio without an HDRI: drop in a procedural sky so the scene
+        // isn't pitch-black.
+        scene.env = Some(Box::new(HdriEnvironmentLight::gradient(
+            Vec3::new(0.20, 0.35, 0.65),
+            Vec3::new(0.95, 0.85, 0.70),
+            args.env_intensity,
+        )));
+    }
 
     tracing::info!(
         triangles = scene.triangle_count(),
@@ -88,6 +135,19 @@ fn main() -> Result<()> {
         } else {
             PinholeCamera::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0, aspect)
         }
+    } else if matches!(
+        args.preset,
+        Some(ScenePreset::Studio)
+    ) || (args.preset.is_none() && args.env.is_some())
+    {
+        // Studio: low-angle hero shot with the spheres centred on screen.
+        PinholeCamera::look_at(
+            Vec3::new(1.6, 0.5, 2.6),
+            Vec3::new(0.0, 0.05, 0.0),
+            Vec3::Y,
+            38.0,
+            aspect,
+        )
     } else {
         // Cornell box: camera just outside the open front face, looking inward.
         PinholeCamera::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0, aspect)
@@ -294,6 +354,62 @@ fn cornell_box() -> Scene {
         Vec3::new(0.0, 0.0, 0.6),
         Vec3::splat(15.0),
     )));
+
+    scene
+}
+
+/// Open studio: a large matte ground plane plus the same gold + plastic
+/// hero spheres used in the Cornell box. No area lights — pair with an
+/// environment for illumination. The camera preset above frames the
+/// spheres at a low angle.
+fn studio_scene() -> Scene {
+    let mut scene = Scene::new();
+
+    // Ground — a big disc-of-quad so the horizon is well off-camera.
+    let ground = scene.materials.len() as u32;
+    scene.materials.push(Box::new(Lambertian {
+        albedo: Vec3::splat(0.55),
+    }));
+    let s = 50.0;
+    let plane = quad_mesh(
+        [
+            Vec3::new(-s, 0.0, -s),
+            Vec3::new(s, 0.0, -s),
+            Vec3::new(s, 0.0, s),
+            Vec3::new(-s, 0.0, s),
+        ],
+        Vec3::Y,
+    );
+    scene.primitives.push(Primitive {
+        instance: MeshInstance::build(plane),
+        material_id: ground,
+    });
+
+    let gold = scene.materials.len() as u32;
+    scene.materials.push(Box::new(DisneyBsdf {
+        base_color: Vec3::new(1.0, 0.766, 0.336),
+        metallic: 1.0,
+        roughness: 0.1,
+        specular: 0.5,
+    }));
+    let gold_sphere = make_uv_sphere(Vec3::new(0.4, 0.35, 0.0), 0.35, 64, 32);
+    scene.primitives.push(Primitive {
+        instance: MeshInstance::build(gold_sphere),
+        material_id: gold,
+    });
+
+    let plastic = scene.materials.len() as u32;
+    scene.materials.push(Box::new(DisneyBsdf {
+        base_color: Vec3::splat(0.72),
+        metallic: 0.0,
+        roughness: 0.2,
+        specular: 0.5,
+    }));
+    let plastic_sphere = make_uv_sphere(Vec3::new(-0.4, 0.35, 0.0), 0.35, 64, 32);
+    scene.primitives.push(Primitive {
+        instance: MeshInstance::build(plastic_sphere),
+        material_id: plastic,
+    });
 
     scene
 }
