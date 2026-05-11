@@ -5,8 +5,10 @@ use glam::Vec2;
 use pyre::{
     Bounds3, Camera, CameraSample, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
     IndependentSampler, InstanceMotion, Lambertian, MeshInstance, PathIntegrator, PinholeCamera,
-    Primitive, Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, pixel_seed,
+    Primitive, Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, load_pbrt,
+    pixel_seed,
 };
+use pyre::io::pbrt::CameraSpec as PbrtCameraSpec;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
@@ -97,21 +99,42 @@ fn main() -> Result<()> {
     let args = Cli::parse();
     let aspect = args.width as f32 / args.height as f32;
 
+    let mut pbrt_camera: Option<PbrtCameraSpec> = None;
     let mut scene = if let Some(path) = &args.scene {
-        let meshes = load_gltf(path)
-            .with_context(|| format!("loading glTF from {}", path.display()))?;
-        tracing::info!(primitives = meshes.len(), "glTF loaded");
-        let mut scene = Scene::new();
-        scene
-            .materials
-            .push(Box::new(Lambertian { albedo: Vec3::splat(0.73) }));
-        for mesh in meshes {
-            scene.primitives.push(Primitive {
-                instance: MeshInstance::build(mesh),
-                material_id: 0,
-            });
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "pbrt" => {
+                let loaded = load_pbrt(path)
+                    .with_context(|| format!("loading PBRT from {}", path.display()))?;
+                pbrt_camera = loaded.camera;
+                loaded.scene
+            }
+            "glb" | "gltf" => {
+                let meshes = load_gltf(path)
+                    .with_context(|| format!("loading glTF from {}", path.display()))?;
+                tracing::info!(primitives = meshes.len(), "glTF loaded");
+                let mut scene = Scene::new();
+                scene
+                    .materials
+                    .push(Box::new(Lambertian { albedo: Vec3::splat(0.73) }));
+                for mesh in meshes {
+                    scene.primitives.push(Primitive {
+                        instance: MeshInstance::build(mesh),
+                        material_id: 0,
+                    });
+                }
+                scene
+            }
+            other => {
+                anyhow::bail!(
+                    "unsupported scene extension {other:?} — expected .pbrt, .gltf, or .glb"
+                );
+            }
         }
-        scene
     } else {
         let preset = args.preset.unwrap_or(if args.env.is_some() {
             ScenePreset::Studio
@@ -146,23 +169,23 @@ fn main() -> Result<()> {
         "scene built"
     );
 
-    let (cam_origin, cam_target, cam_vfov) = if args.scene.is_some() {
+    let (cam_origin, cam_target, cam_up, cam_vfov) = if let Some(c) = pbrt_camera {
+        (c.origin, c.target, c.up, c.vfov_deg)
+    } else if args.scene.is_some() {
         let b = scene.bounds();
         let diag = (b.max - b.min).length();
         if diag.is_finite() && diag > 0.0 {
             let (o, t) = auto_frame_params(b, 45.0, aspect);
-            (o, t, 45.0)
+            (o, t, Vec3::Y, 45.0)
         } else {
-            (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 45.0)
+            (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0)
         }
     } else if matches!(args.preset, Some(ScenePreset::Studio))
         || (args.preset.is_none() && args.env.is_some())
     {
-        // Studio: low-angle hero shot with the spheres centred on screen.
-        (Vec3::new(1.6, 0.5, 2.6), Vec3::new(0.0, 0.05, 0.0), 38.0)
+        (Vec3::new(1.6, 0.5, 2.6), Vec3::new(0.0, 0.05, 0.0), Vec3::Y, 38.0)
     } else {
-        // Cornell box: camera just outside the open front face, looking inward.
-        (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 45.0)
+        (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0)
     };
 
     let focus_distance = args
@@ -172,7 +195,7 @@ fn main() -> Result<()> {
         Box::new(ThinLensCamera::look_at(
             cam_origin,
             cam_target,
-            Vec3::Y,
+            cam_up,
             cam_vfov,
             aspect,
             args.aperture,
@@ -182,7 +205,7 @@ fn main() -> Result<()> {
         Box::new(PinholeCamera::look_at(
             cam_origin,
             cam_target,
-            Vec3::Y,
+            cam_up,
             cam_vfov,
             aspect,
         ))
