@@ -24,7 +24,7 @@ pub use distribution::{Distribution1D, Distribution2D, concentric_disk};
 pub use film::Film;
 pub use geometry::{Bvh, InstanceMotion, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
 pub use integrator::PathIntegrator;
-pub use io::{GltfError, HdrLoadError, load_gltf, load_hdri};
+pub use io::{GltfError, HdrLoadError, LoadedPbrt, PbrtError, load_gltf, load_hdri, load_pbrt};
 pub use light::{
     DiffuseAreaQuadLight, EnvSample, EnvironmentLight, HdriEnvironmentLight, Light, LightHit,
     LightSample,

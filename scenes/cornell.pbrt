@@ -1,0 +1,96 @@
+# Cornell box equivalent of the built-in `cornell` preset, written in the
+# subset of PBRT v3/v4 that pyre's `io::pbrt` loader supports. Used as a
+# round-trip test for the parser at milestone 7.
+#
+# Coordinate system: right-handed, +Y up (pyre convention). Default PBRT
+# scenes are +Z up so an off-the-shelf .pbrt would render upside-down.
+#
+# Wall normals are written explicitly via `"normal N"`. PBRT trianglemesh
+# falls back to a face normal `(v1-v0)×(v2-v0)` when N is absent, which
+# is winding-order dependent — explicit normals are clearer and match the
+# convention used by the built-in `cornell` preset.
+
+LookAt 0 0 3   0 0 0   0 1 0
+Camera "perspective" "float fov" [45]
+Film "image" "string filename" ["cornell-pbrt.png"]
+     "integer xresolution" [800] "integer yresolution" [600]
+Sampler "halton" "integer pixelsamples" [256]
+Integrator "path" "integer maxdepth" [8]
+
+WorldBegin
+
+# ---- white floor (+Y normal, into room) ----
+AttributeBegin
+  Material "matte" "rgb Kd" [0.73 0.73 0.73]
+  Shape "trianglemesh"
+    "point P"   [-1 -1 -1   1 -1 -1   1 -1 1  -1 -1 1]
+    "normal N"  [ 0  1  0   0  1  0   0  1 0   0  1 0]
+    "integer indices" [0 1 2  0 2 3]
+AttributeEnd
+
+# ---- white ceiling (-Y normal) ----
+AttributeBegin
+  Material "matte" "rgb Kd" [0.73 0.73 0.73]
+  Shape "trianglemesh"
+    "point P"   [-1 1 -1   1 1 -1   1 1 1  -1 1 1]
+    "normal N"  [ 0 -1 0   0 -1 0   0 -1 0  0 -1 0]
+    "integer indices" [0 1 2  0 2 3]
+AttributeEnd
+
+# ---- white back wall (+Z normal, toward camera) ----
+AttributeBegin
+  Material "matte" "rgb Kd" [0.73 0.73 0.73]
+  Shape "trianglemesh"
+    "point P"   [-1 -1 -1   1 -1 -1   1 1 -1  -1 1 -1]
+    "normal N"  [ 0 0 1     0 0 1     0 0 1   0 0 1]
+    "integer indices" [0 1 2  0 2 3]
+AttributeEnd
+
+# ---- red left wall (+X normal) ----
+AttributeBegin
+  Material "matte" "rgb Kd" [0.65 0.05 0.05]
+  Shape "trianglemesh"
+    "point P"   [-1 -1 -1  -1 -1 1  -1 1 1  -1 1 -1]
+    "normal N"  [ 1 0 0     1 0 0    1 0 0   1 0 0]
+    "integer indices" [0 1 2  0 2 3]
+AttributeEnd
+
+# ---- green right wall (-X normal) ----
+AttributeBegin
+  Material "matte" "rgb Kd" [0.12 0.45 0.15]
+  Shape "trianglemesh"
+    "point P"   [1 -1 -1   1 1 -1   1 1 1   1 -1 1]
+    "normal N"  [-1 0 0   -1 0 0   -1 0 0  -1 0 0]
+    "integer indices" [0 1 2  0 2 3]
+AttributeEnd
+
+# ---- gold metal sphere (front-right) ----
+AttributeBegin
+  Material "metal" "rgb Kr" [1.0 0.766 0.336] "float roughness" [0.1]
+  Translate 0.35 -0.65 0.25
+  Shape "sphere" "float radius" [0.35]
+AttributeEnd
+
+# ---- glossy plastic sphere (back-left) ----
+AttributeBegin
+  Material "plastic"
+    "rgb Kd" [0.72 0.72 0.72]
+    "rgb Ks" [0.5 0.5 0.5]
+    "float roughness" [0.18]
+  Translate -0.35 -0.65 -0.3
+  Shape "sphere" "float radius" [0.35]
+AttributeEnd
+
+# ---- ceiling area light ----
+# Quad just below the ceiling. The integrator converts a four-vertex
+# two-triangle trianglemesh under AreaLightSource into a
+# DiffuseAreaQuadLight whose emissive normal is `edge_u × edge_v` (the
+# winding here gives a downward-facing emissive face).
+AttributeBegin
+  AreaLightSource "diffuse" "rgb L" [15 15 15]
+  Shape "trianglemesh"
+    "point P" [-0.3 0.999 -0.3   0.3 0.999 -0.3   0.3 0.999 0.3  -0.3 0.999 0.3]
+    "integer indices" [0 1 2  0 2 3]
+AttributeEnd
+
+WorldEnd
