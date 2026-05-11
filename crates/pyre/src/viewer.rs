@@ -150,7 +150,8 @@ fn render_loop(
                     let jitter_y = sampler.next_f32();
                     let ndc_x = 2.0 * (x as f32 + jitter_x) / width as f32 - 1.0;
                     let ndc_y = 1.0 - 2.0 * (y as f32 + jitter_y) / height as f32;
-                    let ray = camera.generate_ray(ndc_x, ndc_y);
+                    let lens = sampler.next_vec2();
+                    let ray = camera.generate_ray(ndc_x, ndc_y, lens);
                     *pixel = integrator.li(ray, &scene, &mut sampler);
                 }
             });

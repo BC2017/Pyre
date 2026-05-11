@@ -4,7 +4,7 @@ use glam::Vec3;
 use pyre::{
     Bounds3, Camera, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
     IndependentSampler, Lambertian, MeshInstance, PathIntegrator, PinholeCamera, Primitive,
-    Sampler, Scene, TriangleMesh, load_gltf, load_hdri, pixel_seed,
+    Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, pixel_seed,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -59,6 +59,18 @@ struct Cli {
     /// set so the env light is the only illuminant.
     #[arg(long, value_enum)]
     preset: Option<ScenePreset>,
+
+    /// Lens aperture radius in scene units. `0` (default) keeps the
+    /// pinhole behaviour — anything in focus, no DoF. Positive values
+    /// switch to a thin-lens camera and produce defocus blur.
+    #[arg(long, default_value_t = 0.0)]
+    aperture: f32,
+
+    /// Distance from the camera to the focus plane, in scene units.
+    /// Defaults to the distance from camera origin to look-at target,
+    /// which is what you want for the built-in presets.
+    #[arg(long)]
+    focus_distance: Option<f32>,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -127,30 +139,46 @@ fn main() -> Result<()> {
         "scene built"
     );
 
-    let camera = if args.scene.is_some() {
+    let (cam_origin, cam_target, cam_vfov) = if args.scene.is_some() {
         let b = scene.bounds();
         let diag = (b.max - b.min).length();
         if diag.is_finite() && diag > 0.0 {
-            auto_frame_camera(b, 45.0, aspect)
+            let (o, t) = auto_frame_params(b, 45.0, aspect);
+            (o, t, 45.0)
         } else {
-            PinholeCamera::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0, aspect)
+            (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 45.0)
         }
-    } else if matches!(
-        args.preset,
-        Some(ScenePreset::Studio)
-    ) || (args.preset.is_none() && args.env.is_some())
+    } else if matches!(args.preset, Some(ScenePreset::Studio))
+        || (args.preset.is_none() && args.env.is_some())
     {
         // Studio: low-angle hero shot with the spheres centred on screen.
-        PinholeCamera::look_at(
-            Vec3::new(1.6, 0.5, 2.6),
-            Vec3::new(0.0, 0.05, 0.0),
-            Vec3::Y,
-            38.0,
-            aspect,
-        )
+        (Vec3::new(1.6, 0.5, 2.6), Vec3::new(0.0, 0.05, 0.0), 38.0)
     } else {
         // Cornell box: camera just outside the open front face, looking inward.
-        PinholeCamera::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0, aspect)
+        (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 45.0)
+    };
+
+    let focus_distance = args
+        .focus_distance
+        .unwrap_or_else(|| (cam_target - cam_origin).length());
+    let camera: Box<dyn Camera> = if args.aperture > 0.0 {
+        Box::new(ThinLensCamera::look_at(
+            cam_origin,
+            cam_target,
+            Vec3::Y,
+            cam_vfov,
+            aspect,
+            args.aperture,
+            focus_distance,
+        ))
+    } else {
+        Box::new(PinholeCamera::look_at(
+            cam_origin,
+            cam_target,
+            Vec3::Y,
+            cam_vfov,
+            aspect,
+        ))
     };
 
     let integrator = PathIntegrator {
@@ -162,7 +190,7 @@ fn main() -> Result<()> {
         let target_spp = if args.spp == 0 { None } else { Some(args.spp) };
         pyre::viewer::run(
             scene,
-            Box::new(camera),
+            camera,
             integrator,
             pyre::viewer::ViewerConfig {
                 width: args.width,
@@ -189,7 +217,8 @@ fn main() -> Result<()> {
             let jitter_y = sampler.next_f32();
             let ndc_x = 2.0 * (x as f32 + jitter_x) / width as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (y as f32 + jitter_y) / height as f32;
-            let ray = camera.generate_ray(ndc_x, ndc_y);
+            let lens = sampler.next_vec2();
+            let ray = camera.generate_ray(ndc_x, ndc_y, lens);
             accum += integrator.li(ray, &scene, &mut sampler);
         }
         accum / spp as f32
@@ -208,7 +237,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn auto_frame_camera(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> PinholeCamera {
+fn auto_frame_params(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> (Vec3, Vec3) {
     let center = bounds.centroid();
     let radius = (bounds.max - bounds.min).length() * 0.5;
     let radius = radius.max(1e-3);
@@ -221,7 +250,7 @@ fn auto_frame_camera(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> PinholeCame
 
     let dir = Vec3::new(0.0, 0.3, 1.0).normalize();
     let origin = center + distance * dir;
-    PinholeCamera::look_at(origin, center, Vec3::Y, vfov_deg, aspect)
+    (origin, center)
 }
 
 fn quad_mesh(corners: [Vec3; 4], normal: Vec3) -> TriangleMesh {

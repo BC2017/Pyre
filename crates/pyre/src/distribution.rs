@@ -3,6 +3,24 @@
 //! used by the HDRI environment light to importance-sample bright pixels.
 
 use glam::Vec2;
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+
+/// Concentric mapping from a square sample `[0,1)^2` to the unit disk
+/// (Shirley & Chiu 1997). Equal-area, lower distortion than the naive
+/// polar map — keeps stratification properties of the input sampler.
+/// Used by `ThinLensCamera` for aperture sampling.
+pub fn concentric_disk(u: Vec2) -> Vec2 {
+    let offset = 2.0 * u - Vec2::ONE;
+    if offset == Vec2::ZERO {
+        return Vec2::ZERO;
+    }
+    let (r, theta) = if offset.x.abs() > offset.y.abs() {
+        (offset.x, FRAC_PI_4 * (offset.y / offset.x))
+    } else {
+        (offset.y, FRAC_PI_2 - FRAC_PI_4 * (offset.x / offset.y))
+    };
+    Vec2::new(r * theta.cos(), r * theta.sin())
+}
 
 /// Piecewise-constant 1D distribution over `[0, 1)`. Built from an array
 /// of non-negative weights; sampling returns a continuous index in

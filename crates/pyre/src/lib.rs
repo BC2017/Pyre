@@ -19,8 +19,8 @@ pub mod scene;
 #[cfg(feature = "viewer")]
 pub mod viewer;
 
-pub use camera::{Camera, PinholeCamera};
-pub use distribution::{Distribution1D, Distribution2D};
+pub use camera::{Camera, PinholeCamera, ThinLensCamera};
+pub use distribution::{Distribution1D, Distribution2D, concentric_disk};
 pub use film::Film;
 pub use geometry::{Bvh, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
 pub use integrator::PathIntegrator;
