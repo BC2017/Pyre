@@ -3,10 +3,10 @@ use clap::{Parser, ValueEnum};
 use glam::Vec3;
 use glam::Vec2;
 use pyre::{
-    Bounds3, Camera, CameraSample, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
-    IndependentSampler, InstanceMotion, Lambertian, MeshInstance, PathIntegrator, PinholeCamera,
-    Primitive, Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, load_pbrt,
-    pixel_seed,
+    AovSet, Bounds3, Camera, CameraSample, DiffuseAreaQuadLight, DisneyBsdf, Film,
+    HdriEnvironmentLight, IndependentSampler, InstanceMotion, Lambertian, MeshInstance,
+    PathIntegrator, PinholeCamera, PixelSample, Primitive, Sampler, Scene, ThinLensCamera,
+    TriangleMesh, load_gltf, load_hdri, load_pbrt, pixel_seed,
 };
 use pyre::io::pbrt::CameraSpec as PbrtCameraSpec;
 use std::path::PathBuf;
@@ -80,6 +80,18 @@ struct Cli {
     /// blurs it. Ignored when `--scene` is loading a glTF.
     #[arg(long)]
     motion_blur: bool,
+
+    /// Comma-separated AOV channels to write alongside the beauty pass.
+    /// Choices: `albedo`, `normal`, `depth`, or `all`. Requires `.exr`
+    /// output — PNG is single-channel and only carries beauty.
+    #[arg(long, value_delimiter = ',')]
+    aovs: Vec<String>,
+
+    /// Also write each enabled AOV as a sidecar PNG (`<stem>.albedo.png`,
+    /// `<stem>.normal.png`, `<stem>.depth.png`) for quick visual checks
+    /// when the main output is an EXR.
+    #[arg(long)]
+    save_aov_pngs: bool,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -232,14 +244,19 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut film = Film::new(args.width, args.height);
+    let aov_set = parse_aov_set(&args.aovs)?;
+    let mut film = Film::new(args.width, args.height).with_save_aovs(aov_set);
     let width = args.width;
     let height = args.height;
     let spp = args.spp;
 
     let started = Instant::now();
     film.render(|x, y| {
-        let mut accum = Vec3::ZERO;
+        let inv_spp = 1.0 / spp as f32;
+        let mut radiance = Vec3::ZERO;
+        let mut albedo = Vec3::ZERO;
+        let mut normal = Vec3::ZERO;
+        let mut depth = 0.0_f32;
         for s in 0..spp {
             let mut sampler = IndependentSampler::new(pixel_seed(x, y, s));
             // Jitter within the pixel for free anti-aliasing.
@@ -254,13 +271,26 @@ fn main() -> Result<()> {
                 lens,
                 time,
             });
-            accum += integrator.li(ray, &scene, &mut sampler);
+            let sample = integrator.integrate(ray, &scene, &mut sampler);
+            radiance += sample.radiance;
+            albedo += sample.albedo;
+            normal += sample.normal;
+            depth += sample.depth;
         }
-        accum / spp as f32
+        PixelSample {
+            radiance: radiance * inv_spp,
+            albedo: albedo * inv_spp,
+            normal: normal * inv_spp,
+            depth: depth * inv_spp,
+        }
     });
     let elapsed = started.elapsed();
 
-    film.save_png(&args.output)?;
+    save_film(&film, &args.output)?;
+    if args.save_aov_pngs {
+        film.save_aov_pngs(&args.output)
+            .with_context(|| "writing AOV sidecar PNGs")?;
+    }
     tracing::info!(
         output = %args.output.display(),
         elapsed_ms = elapsed.as_millis() as u64,
@@ -270,6 +300,38 @@ fn main() -> Result<()> {
         "render complete"
     );
     Ok(())
+}
+
+fn parse_aov_set(spec: &[String]) -> Result<AovSet> {
+    let mut out = AovSet::default();
+    for s in spec {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" => {}
+            "all" => return Ok(AovSet::ALL),
+            "albedo" => out.albedo = true,
+            "normal" | "n" => out.normal = true,
+            "depth" | "z" => out.depth = true,
+            other => anyhow::bail!("unknown AOV {other:?} (expected albedo, normal, depth, or all)"),
+        }
+    }
+    Ok(out)
+}
+
+fn save_film(film: &Film, path: &std::path::Path) -> Result<()> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "exr" => film
+            .save_exr(path)
+            .with_context(|| format!("writing EXR to {}", path.display())),
+        "png" | "" => film
+            .save_png(path)
+            .with_context(|| format!("writing PNG to {}", path.display())),
+        other => anyhow::bail!("unsupported output extension {other:?} (expected .png or .exr)"),
+    }
 }
 
 fn auto_frame_params(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> (Vec3, Vec3) {

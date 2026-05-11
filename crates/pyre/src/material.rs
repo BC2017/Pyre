@@ -24,6 +24,15 @@ pub trait Bsdf: Send + Sync {
     fn eval(&self, wo: Vec3, wi: Vec3) -> Vec3;
     fn pdf(&self, wo: Vec3, wi: Vec3) -> f32;
     fn sample(&self, wo: Vec3, u: Vec2) -> Option<BsdfSample>;
+
+    /// Surface "base color" for compositing / denoising purposes — what
+    /// the material looks like *before* lighting. For matte surfaces this
+    /// is the diffuse reflectance; for metals it's the Fresnel-reflectance
+    /// color. Used by the AOV path to emit an `albedo` channel that
+    /// downstream tools (OIDN, NUKE) expect alongside the beauty pass.
+    fn albedo(&self) -> Vec3 {
+        Vec3::ONE
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +45,10 @@ pub struct Lambertian {
 }
 
 impl Bsdf for Lambertian {
+    fn albedo(&self) -> Vec3 {
+        self.albedo
+    }
+
     fn eval(&self, wo: Vec3, wi: Vec3) -> Vec3 {
         if wo.z <= 0.0 || wi.z <= 0.0 {
             Vec3::ZERO
@@ -168,6 +181,10 @@ impl DisneyBsdf {
 }
 
 impl Bsdf for DisneyBsdf {
+    fn albedo(&self) -> Vec3 {
+        self.base_color
+    }
+
     fn eval(&self, wo: Vec3, wi: Vec3) -> Vec3 {
         self.eval_diffuse(wo, wi) + self.eval_specular(wo, wi)
     }

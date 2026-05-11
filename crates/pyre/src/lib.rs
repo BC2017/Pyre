@@ -21,9 +21,9 @@ pub mod viewer;
 
 pub use camera::{Camera, CameraSample, PinholeCamera, ThinLensCamera};
 pub use distribution::{Distribution1D, Distribution2D, concentric_disk};
-pub use film::Film;
+pub use film::{AovSet, Film};
 pub use geometry::{Bvh, InstanceMotion, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
-pub use integrator::PathIntegrator;
+pub use integrator::{PathIntegrator, PixelSample};
 pub use io::{GltfError, HdrLoadError, LoadedPbrt, PbrtError, load_gltf, load_hdri, load_pbrt};
 pub use light::{
     DiffuseAreaQuadLight, EnvSample, EnvironmentLight, HdriEnvironmentLight, Light, LightHit,

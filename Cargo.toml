@@ -21,6 +21,7 @@ rand_xoshiro = "0.7"
 # Image IO
 exr = "1.73"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr"] }
+smallvec = "1"
 
 # Scene loaders (added per-milestone — versions locked here)
 gltf = "1.4"
