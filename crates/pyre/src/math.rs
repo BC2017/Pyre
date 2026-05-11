@@ -6,6 +6,10 @@ pub struct Ray {
     pub direction: Vec3,
     pub t_min: f32,
     pub t_max: f32,
+    /// Shutter time in `[0, 1]`. Carries through every bounce so an entire
+    /// path samples one shutter instant; the integrator gets motion blur
+    /// for free by sampling `time` per pixel sample.
+    pub time: f32,
 }
 
 impl Ray {
@@ -15,6 +19,7 @@ impl Ray {
             direction: direction.normalize(),
             t_min: 1e-4,
             t_max: f32::INFINITY,
+            time: 0.0,
         }
     }
 

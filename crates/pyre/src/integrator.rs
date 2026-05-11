@@ -43,7 +43,21 @@ impl PathIntegrator {
 
         for depth in 0..self.max_depth {
             let Some(hit) = scene.intersect(&ray) else {
-                // No environment lighting yet (milestone 6).
+                // Ray escaped — pick up environment radiance if any. MIS
+                // with the BSDF arm of NEE so the env contribution is
+                // unbiased even when sampled from both arms.
+                if let Some(env) = scene.env.as_ref() {
+                    let le = env.le(ray.direction);
+                    if le != Vec3::ZERO {
+                        if last_was_specular {
+                            l += beta * le;
+                        } else {
+                            let pdf_env = env.pdf(ray.direction);
+                            let w_bsdf = power_heuristic(last_pdf_bsdf, pdf_env);
+                            l += beta * le * w_bsdf;
+                        }
+                    }
+                }
                 break;
             };
 
@@ -96,12 +110,33 @@ impl PathIntegrator {
                         // and the light geometry.
                         let p_offset = p + RAY_EPS * ns;
                         let target = ls.position - RAY_EPS * ls.wi;
-                        if scene.occluded(p_offset, target) {
+                        if scene.occluded(p_offset, target, ray.time) {
                             continue;
                         }
                         let pdf_bsdf = material.pdf(wo_local, wi_local);
                         let w_light = power_heuristic(ls.pdf, pdf_bsdf);
                         l += beta * f * ls.li * wi_local.z * w_light / ls.pdf;
+                    }
+
+                    // Direct lighting (NEE) — extra arm for the environment.
+                    // Environment lights are at infinity, so we shoot the
+                    // shadow ray as a directional probe (`occluded_dir`).
+                    if let Some(env) = scene.env.as_ref() {
+                        let es = env.sample(sampler.next_vec2());
+                        if es.pdf > 0.0 && es.li != Vec3::ZERO {
+                            let wi_local = frame.to_local(es.wi);
+                            if wi_local.z > 0.0 {
+                                let f = material.eval(wo_local, wi_local);
+                                if f != Vec3::ZERO {
+                                    let p_offset = p + RAY_EPS * ns;
+                                    if !scene.occluded_dir(p_offset, es.wi, ray.time) {
+                                        let pdf_bsdf = material.pdf(wo_local, wi_local);
+                                        let w_light = power_heuristic(es.pdf, pdf_bsdf);
+                                        l += beta * f * es.li * wi_local.z * w_light / es.pdf;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // BSDF sample — drives indirect lighting and the BSDF arm of MIS.
@@ -134,6 +169,7 @@ impl PathIntegrator {
                         direction: wi_world,
                         t_min: 1e-4,
                         t_max: f32::INFINITY,
+                        time: ray.time,
                     };
                 }
             }

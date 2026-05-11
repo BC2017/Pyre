@@ -16,9 +16,9 @@
 //! The `viewer` Cargo feature must be enabled to compile this module.
 
 use crate::{
-    Camera, Film, IndependentSampler, PathIntegrator, Sampler, Scene, pixel_seed,
+    Camera, CameraSample, Film, IndependentSampler, PathIntegrator, Sampler, Scene, pixel_seed,
 };
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use rayon::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -150,7 +150,13 @@ fn render_loop(
                     let jitter_y = sampler.next_f32();
                     let ndc_x = 2.0 * (x as f32 + jitter_x) / width as f32 - 1.0;
                     let ndc_y = 1.0 - 2.0 * (y as f32 + jitter_y) / height as f32;
-                    let ray = camera.generate_ray(ndc_x, ndc_y);
+                    let lens = sampler.next_vec2();
+                    let time = sampler.next_f32();
+                    let ray = camera.generate_ray(CameraSample {
+                        ndc: Vec2::new(ndc_x, ndc_y),
+                        lens,
+                        time,
+                    });
                     *pixel = integrator.li(ray, &scene, &mut sampler);
                 }
             });

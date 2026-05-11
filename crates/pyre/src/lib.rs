@@ -6,6 +6,7 @@
 //! plus implementations.
 
 pub mod camera;
+pub mod distribution;
 pub mod film;
 pub mod geometry;
 pub mod integrator;
@@ -18,12 +19,16 @@ pub mod scene;
 #[cfg(feature = "viewer")]
 pub mod viewer;
 
-pub use camera::{Camera, PinholeCamera};
+pub use camera::{Camera, CameraSample, PinholeCamera, ThinLensCamera};
+pub use distribution::{Distribution1D, Distribution2D, concentric_disk};
 pub use film::Film;
-pub use geometry::{Bvh, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
+pub use geometry::{Bvh, InstanceMotion, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
 pub use integrator::PathIntegrator;
-pub use io::{GltfError, load_gltf};
-pub use light::{DiffuseAreaQuadLight, Light, LightHit, LightSample};
+pub use io::{GltfError, HdrLoadError, load_gltf, load_hdri};
+pub use light::{
+    DiffuseAreaQuadLight, EnvSample, EnvironmentLight, HdriEnvironmentLight, Light, LightHit,
+    LightSample,
+};
 pub use material::{Bsdf, BsdfSample, DisneyBsdf, Lambertian};
 pub use math::{Bounds3, Frame, Ray};
 pub use sampler::{IndependentSampler, Sampler, pixel_seed};

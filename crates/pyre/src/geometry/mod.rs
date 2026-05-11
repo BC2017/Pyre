@@ -6,7 +6,7 @@ pub mod mesh;
 pub mod sphere;
 
 pub use bvh::{Bvh, BvhNode};
-pub use mesh::{MeshInstance, TriangleMesh};
+pub use mesh::{InstanceMotion, MeshInstance, TriangleMesh};
 pub use sphere::Sphere;
 
 #[derive(Debug, Clone, Copy)]

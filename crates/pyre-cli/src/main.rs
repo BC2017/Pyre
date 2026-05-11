@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use glam::Vec3;
+use glam::Vec2;
 use pyre::{
-    Bounds3, Camera, DiffuseAreaQuadLight, DisneyBsdf, Film, IndependentSampler, Lambertian,
-    MeshInstance, PathIntegrator, PinholeCamera, Primitive, Sampler, Scene, TriangleMesh,
-    load_gltf, pixel_seed,
+    Bounds3, Camera, CameraSample, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
+    IndependentSampler, InstanceMotion, Lambertian, MeshInstance, PathIntegrator, PinholeCamera,
+    Primitive, Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, pixel_seed,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -44,6 +45,48 @@ struct Cli {
     /// auto-saved on completion.
     #[arg(long)]
     viewer: bool,
+
+    /// Path to a Radiance `.hdr` environment map. Implies the `studio`
+    /// scene preset when `--scene` is also omitted.
+    #[arg(long)]
+    env: Option<PathBuf>,
+
+    /// Multiplier applied to the environment map's radiance.
+    #[arg(long, default_value_t = 1.0)]
+    env_intensity: f32,
+
+    /// Built-in scene to render when no glTF `--scene` is given. Defaults
+    /// to `cornell`; switches to `studio` automatically when `--env` is
+    /// set so the env light is the only illuminant.
+    #[arg(long, value_enum)]
+    preset: Option<ScenePreset>,
+
+    /// Lens aperture radius in scene units. `0` (default) keeps the
+    /// pinhole behaviour — anything in focus, no DoF. Positive values
+    /// switch to a thin-lens camera and produce defocus blur.
+    #[arg(long, default_value_t = 0.0)]
+    aperture: f32,
+
+    /// Distance from the camera to the focus plane, in scene units.
+    /// Defaults to the distance from camera origin to look-at target,
+    /// which is what you want for the built-in presets.
+    #[arg(long)]
+    focus_distance: Option<f32>,
+
+    /// Enable motion blur on the built-in scenes — translates one of the
+    /// hero spheres across the shutter so the per-pixel time integration
+    /// blurs it. Ignored when `--scene` is loading a glTF.
+    #[arg(long)]
+    motion_blur: bool,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ScenePreset {
+    /// Closed Cornell box with a ceiling area light and two test spheres.
+    Cornell,
+    /// Open studio: ground plane and two test spheres, no area lights.
+    /// Pair with `--env` for HDRI lighting.
+    Studio,
 }
 
 fn main() -> Result<()> {
@@ -54,7 +97,7 @@ fn main() -> Result<()> {
     let args = Cli::parse();
     let aspect = args.width as f32 / args.height as f32;
 
-    let scene = if let Some(path) = &args.scene {
+    let mut scene = if let Some(path) = &args.scene {
         let meshes = load_gltf(path)
             .with_context(|| format!("loading glTF from {}", path.display()))?;
         tracing::info!(primitives = meshes.len(), "glTF loaded");
@@ -70,8 +113,31 @@ fn main() -> Result<()> {
         }
         scene
     } else {
-        cornell_box()
+        let preset = args.preset.unwrap_or(if args.env.is_some() {
+            ScenePreset::Studio
+        } else {
+            ScenePreset::Cornell
+        });
+        match preset {
+            ScenePreset::Cornell => cornell_box(args.motion_blur),
+            ScenePreset::Studio => studio_scene(args.motion_blur),
+        }
     };
+
+    if let Some(env_path) = &args.env {
+        let env = load_hdri(env_path, args.env_intensity)
+            .with_context(|| format!("loading HDRI from {}", env_path.display()))?;
+        tracing::info!(path = %env_path.display(), intensity = args.env_intensity, "HDRI loaded");
+        scene.env = Some(Box::new(env));
+    } else if matches!(args.preset, Some(ScenePreset::Studio)) {
+        // Studio without an HDRI: drop in a procedural sky so the scene
+        // isn't pitch-black.
+        scene.env = Some(Box::new(HdriEnvironmentLight::gradient(
+            Vec3::new(0.20, 0.35, 0.65),
+            Vec3::new(0.95, 0.85, 0.70),
+            args.env_intensity,
+        )));
+    }
 
     tracing::info!(
         triangles = scene.triangle_count(),
@@ -80,17 +146,46 @@ fn main() -> Result<()> {
         "scene built"
     );
 
-    let camera = if args.scene.is_some() {
+    let (cam_origin, cam_target, cam_vfov) = if args.scene.is_some() {
         let b = scene.bounds();
         let diag = (b.max - b.min).length();
         if diag.is_finite() && diag > 0.0 {
-            auto_frame_camera(b, 45.0, aspect)
+            let (o, t) = auto_frame_params(b, 45.0, aspect);
+            (o, t, 45.0)
         } else {
-            PinholeCamera::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0, aspect)
+            (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 45.0)
         }
+    } else if matches!(args.preset, Some(ScenePreset::Studio))
+        || (args.preset.is_none() && args.env.is_some())
+    {
+        // Studio: low-angle hero shot with the spheres centred on screen.
+        (Vec3::new(1.6, 0.5, 2.6), Vec3::new(0.0, 0.05, 0.0), 38.0)
     } else {
         // Cornell box: camera just outside the open front face, looking inward.
-        PinholeCamera::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, Vec3::Y, 45.0, aspect)
+        (Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 45.0)
+    };
+
+    let focus_distance = args
+        .focus_distance
+        .unwrap_or_else(|| (cam_target - cam_origin).length());
+    let camera: Box<dyn Camera> = if args.aperture > 0.0 {
+        Box::new(ThinLensCamera::look_at(
+            cam_origin,
+            cam_target,
+            Vec3::Y,
+            cam_vfov,
+            aspect,
+            args.aperture,
+            focus_distance,
+        ))
+    } else {
+        Box::new(PinholeCamera::look_at(
+            cam_origin,
+            cam_target,
+            Vec3::Y,
+            cam_vfov,
+            aspect,
+        ))
     };
 
     let integrator = PathIntegrator {
@@ -102,7 +197,7 @@ fn main() -> Result<()> {
         let target_spp = if args.spp == 0 { None } else { Some(args.spp) };
         pyre::viewer::run(
             scene,
-            Box::new(camera),
+            camera,
             integrator,
             pyre::viewer::ViewerConfig {
                 width: args.width,
@@ -129,7 +224,13 @@ fn main() -> Result<()> {
             let jitter_y = sampler.next_f32();
             let ndc_x = 2.0 * (x as f32 + jitter_x) / width as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (y as f32 + jitter_y) / height as f32;
-            let ray = camera.generate_ray(ndc_x, ndc_y);
+            let lens = sampler.next_vec2();
+            let time = sampler.next_f32();
+            let ray = camera.generate_ray(CameraSample {
+                ndc: Vec2::new(ndc_x, ndc_y),
+                lens,
+                time,
+            });
             accum += integrator.li(ray, &scene, &mut sampler);
         }
         accum / spp as f32
@@ -148,7 +249,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn auto_frame_camera(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> PinholeCamera {
+fn auto_frame_params(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> (Vec3, Vec3) {
     let center = bounds.centroid();
     let radius = (bounds.max - bounds.min).length() * 0.5;
     let radius = radius.max(1e-3);
@@ -161,7 +262,7 @@ fn auto_frame_camera(bounds: Bounds3, vfov_deg: f32, aspect: f32) -> PinholeCame
 
     let dir = Vec3::new(0.0, 0.3, 1.0).normalize();
     let origin = center + distance * dir;
-    PinholeCamera::look_at(origin, center, Vec3::Y, vfov_deg, aspect)
+    (origin, center)
 }
 
 fn quad_mesh(corners: [Vec3; 4], normal: Vec3) -> TriangleMesh {
@@ -176,7 +277,7 @@ fn quad_mesh(corners: [Vec3; 4], normal: Vec3) -> TriangleMesh {
 /// Classic Cornell box: 5 walls (no front), one ceiling area light, plus a
 /// white sphere on the floor for visual interest. Centered at the origin
 /// with half-extent 1.
-fn cornell_box() -> Scene {
+fn cornell_box(motion_blur: bool) -> Scene {
     let mut scene = Scene::new();
 
     let white = scene.materials.len() as u32;
@@ -267,8 +368,19 @@ fn cornell_box() -> Scene {
         specular: 0.5,
     }));
     let gold_sphere = make_uv_sphere(Vec3::new(0.35, -0.65, 0.25), 0.35, 48, 24);
+    let gold_instance = if motion_blur {
+        MeshInstance::build_animated(
+            gold_sphere,
+            InstanceMotion {
+                offset_t0: Vec3::ZERO,
+                offset_t1: Vec3::new(0.0, 0.25, 0.0),
+            },
+        )
+    } else {
+        MeshInstance::build(gold_sphere)
+    };
     scene.primitives.push(Primitive {
-        instance: MeshInstance::build(gold_sphere),
+        instance: gold_instance,
         material_id: gold,
     });
 
@@ -294,6 +406,73 @@ fn cornell_box() -> Scene {
         Vec3::new(0.0, 0.0, 0.6),
         Vec3::splat(15.0),
     )));
+
+    scene
+}
+
+/// Open studio: a large matte ground plane plus the same gold + plastic
+/// hero spheres used in the Cornell box. No area lights — pair with an
+/// environment for illumination. The camera preset above frames the
+/// spheres at a low angle.
+fn studio_scene(motion_blur: bool) -> Scene {
+    let mut scene = Scene::new();
+
+    // Ground — a big disc-of-quad so the horizon is well off-camera.
+    let ground = scene.materials.len() as u32;
+    scene.materials.push(Box::new(Lambertian {
+        albedo: Vec3::splat(0.55),
+    }));
+    let s = 50.0;
+    let plane = quad_mesh(
+        [
+            Vec3::new(-s, 0.0, -s),
+            Vec3::new(s, 0.0, -s),
+            Vec3::new(s, 0.0, s),
+            Vec3::new(-s, 0.0, s),
+        ],
+        Vec3::Y,
+    );
+    scene.primitives.push(Primitive {
+        instance: MeshInstance::build(plane),
+        material_id: ground,
+    });
+
+    let gold = scene.materials.len() as u32;
+    scene.materials.push(Box::new(DisneyBsdf {
+        base_color: Vec3::new(1.0, 0.766, 0.336),
+        metallic: 1.0,
+        roughness: 0.1,
+        specular: 0.5,
+    }));
+    let gold_sphere = make_uv_sphere(Vec3::new(0.4, 0.35, 0.0), 0.35, 64, 32);
+    let gold_instance = if motion_blur {
+        MeshInstance::build_animated(
+            gold_sphere,
+            InstanceMotion {
+                offset_t0: Vec3::new(-0.15, 0.0, 0.0),
+                offset_t1: Vec3::new(0.15, 0.0, 0.0),
+            },
+        )
+    } else {
+        MeshInstance::build(gold_sphere)
+    };
+    scene.primitives.push(Primitive {
+        instance: gold_instance,
+        material_id: gold,
+    });
+
+    let plastic = scene.materials.len() as u32;
+    scene.materials.push(Box::new(DisneyBsdf {
+        base_color: Vec3::splat(0.72),
+        metallic: 0.0,
+        roughness: 0.2,
+        specular: 0.5,
+    }));
+    let plastic_sphere = make_uv_sphere(Vec3::new(-0.4, 0.35, 0.0), 0.35, 64, 32);
+    scene.primitives.push(Primitive {
+        instance: MeshInstance::build(plastic_sphere),
+        material_id: plastic,
+    });
 
     scene
 }
