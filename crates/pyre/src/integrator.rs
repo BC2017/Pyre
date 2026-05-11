@@ -110,7 +110,7 @@ impl PathIntegrator {
                         // and the light geometry.
                         let p_offset = p + RAY_EPS * ns;
                         let target = ls.position - RAY_EPS * ls.wi;
-                        if scene.occluded(p_offset, target) {
+                        if scene.occluded(p_offset, target, ray.time) {
                             continue;
                         }
                         let pdf_bsdf = material.pdf(wo_local, wi_local);
@@ -129,7 +129,7 @@ impl PathIntegrator {
                                 let f = material.eval(wo_local, wi_local);
                                 if f != Vec3::ZERO {
                                     let p_offset = p + RAY_EPS * ns;
-                                    if !scene.occluded_dir(p_offset, es.wi) {
+                                    if !scene.occluded_dir(p_offset, es.wi, ray.time) {
                                         let pdf_bsdf = material.pdf(wo_local, wi_local);
                                         let w_light = power_heuristic(es.pdf, pdf_bsdf);
                                         l += beta * f * es.li * wi_local.z * w_light / es.pdf;
@@ -169,6 +169,7 @@ impl PathIntegrator {
                         direction: wi_world,
                         t_min: 1e-4,
                         t_max: f32::INFINITY,
+                        time: ray.time,
                     };
                 }
             }

@@ -19,10 +19,10 @@ pub mod scene;
 #[cfg(feature = "viewer")]
 pub mod viewer;
 
-pub use camera::{Camera, PinholeCamera, ThinLensCamera};
+pub use camera::{Camera, CameraSample, PinholeCamera, ThinLensCamera};
 pub use distribution::{Distribution1D, Distribution2D, concentric_disk};
 pub use film::Film;
-pub use geometry::{Bvh, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
+pub use geometry::{Bvh, InstanceMotion, MeshInstance, Shape, Sphere, SurfaceInteraction, TriangleMesh};
 pub use integrator::PathIntegrator;
 pub use io::{GltfError, HdrLoadError, load_gltf, load_hdri};
 pub use light::{

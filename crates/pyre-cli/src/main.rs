@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use glam::Vec3;
+use glam::Vec2;
 use pyre::{
-    Bounds3, Camera, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
-    IndependentSampler, Lambertian, MeshInstance, PathIntegrator, PinholeCamera, Primitive,
-    Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, pixel_seed,
+    Bounds3, Camera, CameraSample, DiffuseAreaQuadLight, DisneyBsdf, Film, HdriEnvironmentLight,
+    IndependentSampler, InstanceMotion, Lambertian, MeshInstance, PathIntegrator, PinholeCamera,
+    Primitive, Sampler, Scene, ThinLensCamera, TriangleMesh, load_gltf, load_hdri, pixel_seed,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -71,6 +72,12 @@ struct Cli {
     /// which is what you want for the built-in presets.
     #[arg(long)]
     focus_distance: Option<f32>,
+
+    /// Enable motion blur on the built-in scenes — translates one of the
+    /// hero spheres across the shutter so the per-pixel time integration
+    /// blurs it. Ignored when `--scene` is loading a glTF.
+    #[arg(long)]
+    motion_blur: bool,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -112,8 +119,8 @@ fn main() -> Result<()> {
             ScenePreset::Cornell
         });
         match preset {
-            ScenePreset::Cornell => cornell_box(),
-            ScenePreset::Studio => studio_scene(),
+            ScenePreset::Cornell => cornell_box(args.motion_blur),
+            ScenePreset::Studio => studio_scene(args.motion_blur),
         }
     };
 
@@ -218,7 +225,12 @@ fn main() -> Result<()> {
             let ndc_x = 2.0 * (x as f32 + jitter_x) / width as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (y as f32 + jitter_y) / height as f32;
             let lens = sampler.next_vec2();
-            let ray = camera.generate_ray(ndc_x, ndc_y, lens);
+            let time = sampler.next_f32();
+            let ray = camera.generate_ray(CameraSample {
+                ndc: Vec2::new(ndc_x, ndc_y),
+                lens,
+                time,
+            });
             accum += integrator.li(ray, &scene, &mut sampler);
         }
         accum / spp as f32
@@ -265,7 +277,7 @@ fn quad_mesh(corners: [Vec3; 4], normal: Vec3) -> TriangleMesh {
 /// Classic Cornell box: 5 walls (no front), one ceiling area light, plus a
 /// white sphere on the floor for visual interest. Centered at the origin
 /// with half-extent 1.
-fn cornell_box() -> Scene {
+fn cornell_box(motion_blur: bool) -> Scene {
     let mut scene = Scene::new();
 
     let white = scene.materials.len() as u32;
@@ -356,8 +368,19 @@ fn cornell_box() -> Scene {
         specular: 0.5,
     }));
     let gold_sphere = make_uv_sphere(Vec3::new(0.35, -0.65, 0.25), 0.35, 48, 24);
+    let gold_instance = if motion_blur {
+        MeshInstance::build_animated(
+            gold_sphere,
+            InstanceMotion {
+                offset_t0: Vec3::ZERO,
+                offset_t1: Vec3::new(0.0, 0.25, 0.0),
+            },
+        )
+    } else {
+        MeshInstance::build(gold_sphere)
+    };
     scene.primitives.push(Primitive {
-        instance: MeshInstance::build(gold_sphere),
+        instance: gold_instance,
         material_id: gold,
     });
 
@@ -391,7 +414,7 @@ fn cornell_box() -> Scene {
 /// hero spheres used in the Cornell box. No area lights — pair with an
 /// environment for illumination. The camera preset above frames the
 /// spheres at a low angle.
-fn studio_scene() -> Scene {
+fn studio_scene(motion_blur: bool) -> Scene {
     let mut scene = Scene::new();
 
     // Ground — a big disc-of-quad so the horizon is well off-camera.
@@ -422,8 +445,19 @@ fn studio_scene() -> Scene {
         specular: 0.5,
     }));
     let gold_sphere = make_uv_sphere(Vec3::new(0.4, 0.35, 0.0), 0.35, 64, 32);
+    let gold_instance = if motion_blur {
+        MeshInstance::build_animated(
+            gold_sphere,
+            InstanceMotion {
+                offset_t0: Vec3::new(-0.15, 0.0, 0.0),
+                offset_t1: Vec3::new(0.15, 0.0, 0.0),
+            },
+        )
+    } else {
+        MeshInstance::build(gold_sphere)
+    };
     scene.primitives.push(Primitive {
-        instance: MeshInstance::build(gold_sphere),
+        instance: gold_instance,
         material_id: gold,
     });
 

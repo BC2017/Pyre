@@ -40,11 +40,37 @@ impl TriangleMesh {
     }
 }
 
+/// Linear translation animation for an instance. `offset_t0` is the
+/// world-space position at shutter open (time = 0), `offset_t1` at
+/// shutter close (time = 1). Static instances skip this entirely.
+#[derive(Debug, Clone, Copy)]
+pub struct InstanceMotion {
+    pub offset_t0: Vec3,
+    pub offset_t1: Vec3,
+}
+
+impl InstanceMotion {
+    pub fn at(&self, time: f32) -> Vec3 {
+        self.offset_t0.lerp(self.offset_t1, time.clamp(0.0, 1.0))
+    }
+
+    pub fn swept_translation_bounds(&self) -> Bounds3 {
+        Bounds3::point(self.offset_t0).extend(self.offset_t1)
+    }
+}
+
 /// A mesh paired with its acceleration structure. The renderer always
 /// intersects against this, never against a bare `TriangleMesh`.
+///
+/// `motion` adds translation-only motion blur: the underlying BVH stays
+/// in static "object space" (the mesh's original positions), and the
+/// `Shape` impl shifts incoming rays by `-motion.at(ray.time)` before the
+/// BVH lookup and shifts the hit position back after. Rotation /
+/// scaling motion is deferred until the first scene that needs it.
 pub struct MeshInstance {
     pub mesh: TriangleMesh,
     pub bvh: Bvh,
+    pub motion: Option<InstanceMotion>,
 }
 
 impl MeshInstance {
@@ -57,13 +83,45 @@ impl MeshInstance {
             centroids.push(mesh.triangle_centroid(tri));
         }
         let bvh = Bvh::build(&bounds, &centroids);
-        MeshInstance { mesh, bvh }
+        MeshInstance { mesh, bvh, motion: None }
+    }
+
+    pub fn build_animated(mesh: TriangleMesh, motion: InstanceMotion) -> Self {
+        let mut me = Self::build(mesh);
+        me.motion = Some(motion);
+        me
+    }
+
+    /// Swept world-space bounds over the full shutter `[0, 1]`. For static
+    /// instances this is exactly the BVH's root bounds.
+    pub fn world_bounds(&self) -> Bounds3 {
+        let base = self.bvh.root_bounds();
+        if let Some(m) = self.motion {
+            let b0 = Bounds3::new(base.min + m.offset_t0, base.max + m.offset_t0);
+            let b1 = Bounds3::new(base.min + m.offset_t1, base.max + m.offset_t1);
+            b0.union(&b1)
+        } else {
+            base
+        }
     }
 }
 
 impl Shape for MeshInstance {
     fn intersect(&self, ray: &Ray) -> Option<SurfaceInteraction> {
-        self.bvh.intersect(ray, |tri, r| {
+        // Translate the ray into the static (offset = 0) frame of the
+        // mesh. Translation-only motion preserves distance and direction,
+        // so `t` and `normal` come straight back; we only need to shift
+        // the hit position to world space.
+        let offset = self.motion.map(|m| m.at(ray.time)).unwrap_or(Vec3::ZERO);
+        let local_ray = if offset == Vec3::ZERO {
+            *ray
+        } else {
+            Ray {
+                origin: ray.origin - offset,
+                ..*ray
+            }
+        };
+        let mut it = self.bvh.intersect(&local_ray, |tri, r| {
             let [a, b, c] = self.mesh.triangle_indices(tri);
             let v0 = self.mesh.positions[a as usize];
             let v1 = self.mesh.positions[b as usize];
@@ -81,7 +139,11 @@ impl Shape for MeshInstance {
                 position,
                 normal,
             })
-        })
+        })?;
+        if offset != Vec3::ZERO {
+            it.position += offset;
+        }
+        Some(it)
     }
 }
 

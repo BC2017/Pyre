@@ -2,12 +2,27 @@ use crate::distribution::concentric_disk;
 use crate::math::Ray;
 use glam::{Vec2, Vec3};
 
+/// Everything the camera needs from the sampler to build one primary
+/// ray. Bundling it keeps the trait signature stable as new dimensions
+/// (lens, time, …) get added.
+#[derive(Debug, Clone, Copy)]
+pub struct CameraSample {
+    /// Normalised device coordinates in `[-1, 1]^2`, jittered within the
+    /// pixel for anti-aliasing. `(-1, -1)` is bottom-left of the image.
+    pub ndc: Vec2,
+    /// Uniform `[0, 1)^2` sample for aperture (concentric-disk-mapped).
+    /// Pinhole cameras ignore this.
+    pub lens: Vec2,
+    /// Uniform `[0, 1)` shutter sample stamped onto the output ray. Used
+    /// by moving instances and (eventually) animated cameras / lights.
+    pub time: f32,
+}
+
 pub trait Camera: Send + Sync {
-    /// Generate a primary ray for a sample at NDC coordinates `(ndc_x, ndc_y)`
-    /// in `[-1, 1]^2`. `(-1, -1)` is the bottom-left of the image and `(1, 1)`
-    /// is the top-right. `lens_sample` is a uniform `[0,1)^2` sample used by
-    /// aperture-bearing cameras (`ThinLensCamera`); pinhole cameras ignore it.
-    fn generate_ray(&self, ndc_x: f32, ndc_y: f32, lens_sample: Vec2) -> Ray;
+    /// Generate a primary ray. The output ray's `time` should always be
+    /// set to `sample.time` so motion-blurred geometry resolves correctly
+    /// at every bounce.
+    fn generate_ray(&self, sample: CameraSample) -> Ray;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,11 +62,13 @@ impl PinholeCamera {
 }
 
 impl Camera for PinholeCamera {
-    fn generate_ray(&self, ndc_x: f32, ndc_y: f32, _lens_sample: Vec2) -> Ray {
+    fn generate_ray(&self, sample: CameraSample) -> Ray {
         let direction = self.forward
-            + ndc_x * self.half_width * self.right
-            + ndc_y * self.half_height * self.up;
-        Ray::new(self.origin, direction)
+            + sample.ndc.x * self.half_width * self.right
+            + sample.ndc.y * self.half_height * self.up;
+        let mut ray = Ray::new(self.origin, direction);
+        ray.time = sample.time;
+        ray
     }
 }
 
@@ -105,10 +122,10 @@ impl ThinLensCamera {
 }
 
 impl Camera for ThinLensCamera {
-    fn generate_ray(&self, ndc_x: f32, ndc_y: f32, lens_sample: Vec2) -> Ray {
+    fn generate_ray(&self, sample: CameraSample) -> Ray {
         let pinhole_dir = (self.forward
-            + ndc_x * self.half_width * self.right
-            + ndc_y * self.half_height * self.up)
+            + sample.ndc.x * self.half_width * self.right
+            + sample.ndc.y * self.half_height * self.up)
             .normalize();
         // Distance along the pinhole ray to the focus plane (which is
         // parallel to the image plane, offset by `focus_distance` along
@@ -116,10 +133,12 @@ impl Camera for ThinLensCamera {
         let focal_t = self.focus_distance / pinhole_dir.dot(self.forward);
         let focal_point = self.origin + focal_t * pinhole_dir;
 
-        let disk = concentric_disk(lens_sample);
+        let disk = concentric_disk(sample.lens);
         let lens_offset = self.aperture_radius * (disk.x * self.right + disk.y * self.up);
         let lens_origin = self.origin + lens_offset;
         let dir = (focal_point - lens_origin).normalize();
-        Ray::new(lens_origin, dir)
+        let mut ray = Ray::new(lens_origin, dir);
+        ray.time = sample.time;
+        ray
     }
 }
