@@ -8,6 +8,26 @@ use crate::{
 };
 use glam::Vec3;
 
+/// Per-sample output of the integrator. `radiance` is the beauty channel;
+/// the remaining fields are AOVs captured at the first surface/light hit
+/// for compositing and denoising. Misses leave the AOVs at their defaults.
+#[derive(Debug, Clone, Copy)]
+pub struct PixelSample {
+    pub radiance: Vec3,
+    pub albedo: Vec3,
+    pub normal: Vec3,
+    pub depth: f32,
+}
+
+impl PixelSample {
+    pub const MISS: Self = Self {
+        radiance: Vec3::ZERO,
+        albedo: Vec3::ZERO,
+        normal: Vec3::ZERO,
+        depth: 0.0,
+    };
+}
+
 /// Bias amount when spawning rays off a surface — pushes the origin off the
 /// surface to dodge self-intersection. Scaled in scene units; for a Cornell
 /// box of half-extent 1, 1e-3 is plenty.
@@ -28,11 +48,18 @@ impl Default for PathIntegrator {
 }
 
 impl PathIntegrator {
-    /// Estimate the radiance arriving at the camera along `ray` using a single
-    /// path sample. The integrator uses MIS direct lighting (light + BSDF
-    /// sampling combined via the power heuristic) and Russian roulette
-    /// termination after `min_rr_depth` bounces.
-    pub fn li(&self, mut ray: Ray, scene: &Scene, sampler: &mut impl Sampler) -> Vec3 {
+    /// Estimate the radiance + AOVs along `ray` using a single path sample.
+    /// The integrator uses MIS direct lighting (light + BSDF sampling
+    /// combined via the power heuristic) and Russian roulette termination
+    /// after `min_rr_depth` bounces. AOVs (`albedo`, `normal`, `depth`)
+    /// are captured on the first surface or light hit; ray misses leave
+    /// them at zero.
+    pub fn integrate(
+        &self,
+        mut ray: Ray,
+        scene: &Scene,
+        sampler: &mut impl Sampler,
+    ) -> PixelSample {
         let mut l = Vec3::ZERO;
         let mut beta = Vec3::ONE;
         // pdf of the BSDF sample that produced the current ray. Used for MIS
@@ -40,6 +67,11 @@ impl PathIntegrator {
         let mut last_pdf_bsdf: f32 = 0.0;
         // Camera rays and specular bounces collect Le without MIS weighting.
         let mut last_was_specular = true;
+
+        let mut aov_albedo = Vec3::ZERO;
+        let mut aov_normal = Vec3::ZERO;
+        let mut aov_depth = 0.0_f32;
+        let mut aovs_captured = false;
 
         for depth in 0..self.max_depth {
             let Some(hit) = scene.intersect(&ray) else {
@@ -60,6 +92,22 @@ impl PathIntegrator {
                 }
                 break;
             };
+
+            if !aovs_captured {
+                aovs_captured = true;
+                aov_normal = hit.interaction.normal;
+                aov_depth = hit.interaction.t;
+                aov_albedo = match hit.kind {
+                    HitKind::Surface { material_id, .. } => {
+                        scene.materials[material_id as usize].albedo()
+                    }
+                    // Area lights "look white" to a denoiser — the emission
+                    // is encoded in the beauty channel, not the albedo
+                    // (otherwise OIDN would over-correct toward the colour
+                    // of bright sources).
+                    HitKind::Light { .. } => Vec3::ONE,
+                };
+            }
 
             match hit.kind {
                 HitKind::Light { light_id } => {
@@ -174,7 +222,12 @@ impl PathIntegrator {
                 }
             }
         }
-        l
+        PixelSample {
+            radiance: l,
+            albedo: aov_albedo,
+            normal: aov_normal,
+            depth: aov_depth,
+        }
     }
 }
 

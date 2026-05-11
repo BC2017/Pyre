@@ -157,7 +157,7 @@ fn render_loop(
                         lens,
                         time,
                     });
-                    *pixel = integrator.li(ray, &scene, &mut sampler);
+                    *pixel = integrator.integrate(ray, &scene, &mut sampler).radiance;
                 }
             });
         pass += 1;
